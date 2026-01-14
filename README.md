@@ -2,7 +2,6 @@
 
 ![Dashboard Overview](screenshots/overview.png)
 
-> **More visuals:** View the full set of dashboard screenshots in the [`screenshots`](./screenshots) directory.
 
 ## Problem
 
