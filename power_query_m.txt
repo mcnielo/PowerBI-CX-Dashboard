@@ -1,0 +1,278 @@
+let
+    Source = PowerPlatform.Dataflows(null),
+    Workspaces = Source{[Id="Workspaces"]}[Data],
+
+    // Redacted identifiers for confidentiality
+    Workspace = Workspaces{[workspaceId="<<REDACTED_WORKSPACE_ID>>"]}[Data],
+    Dataflow  = Workspace{[dataflowId="<<REDACTED_DATAFLOW_ID>>"]}[Data],
+
+    LessonSets = Dataflow{[entity="TC Lesson Sets", version=""]}[Data],
+
+    #"Filtered Rows" =
+        Table.SelectRows(LessonSets, each ([lesson_id] <> null)),
+
+    AddSetLessonId =
+        Table.AddColumn(
+            #"Filtered Rows",
+            "set_lesson_id",
+            each Text.From([lesson_set_id]) & ":" & Text.From([lesson_id]),
+            type text
+        ),
+
+    AddKeyLanguage =
+        Table.AddColumn(
+            AddSetLessonId,
+            "key_language",
+            each
+                if Text.Contains([lesson_name], "movable alphabet", Comparer.OrdinalIgnoreCase)
+                    or Text.Contains([lesson_path], "movable alphabet", Comparer.OrdinalIgnoreCase)
+                then "movable alphabet"
+                else if Text.Contains([lesson_name], "sandpaper letters", Comparer.OrdinalIgnoreCase)
+                    or Text.Contains([lesson_path], "sandpaper letters", Comparer.OrdinalIgnoreCase)
+                then "sandpaper letters"
+                else if Text.Contains([lesson_name], "emergent reader", Comparer.OrdinalIgnoreCase)
+                    or Text.Contains([lesson_name], "emergent book", Comparer.OrdinalIgnoreCase)
+                    or Text.Contains([lesson_name], "emergent set", Comparer.OrdinalIgnoreCase)
+                    or Text.Contains([lesson_path], "emergent reader", Comparer.OrdinalIgnoreCase)
+                then "emergent reader"
+                else null,
+            type text
+        ),
+
+    AddIsLetterSound =
+        Table.AddColumn(
+            AddKeyLanguage,
+            "is_letter_sound",
+            each
+                if [key_language] = "sandpaper letters" then
+                    if Text.Length([lesson_name]) = 1
+                        or Text.Length(Text.BeforeDelimiter([lesson_name], " - ")) = 1
+                    then true
+                    else false
+                else null,
+            type logical
+        ),
+
+    AddOneLetterName =
+        Table.AddColumn(
+            AddIsLetterSound,
+            "one_letter_name",
+            each if [is_letter_sound] = true then Text.At([lesson_name], 0) else null,
+            type text
+        ),
+
+    #"Filtered Rows1" =
+        Table.SelectRows(AddOneLetterName, each ([area_archived] = null) and ([lesson_archived] = null))
+in
+    #"Filtered Rows1"
+
+
+
+let
+    // NOTE: Source URL redacted for confidentiality.
+    // Replace with your own parameter or local file path when running.
+    Source =
+        Excel.Workbook(
+            Web.Contents("<<REDACTED_SHAREPOINT_FILE_URL>>"),
+            null,
+            true
+        ),
+
+    OfficeForms_Table =
+        Source{[Item="OfficeForms.Table", Kind="Table"]}[Data],
+
+    #"Changed Type" =
+        Table.TransformColumnTypes(
+            OfficeForms_Table,
+            {
+                {"Id", Int64.Type},
+                {"Start time", type datetime},
+                {"Completion time", type datetime},
+                {"Email", type text},
+                {"Name", type any},
+                {"Total points", Int64.Type},
+                {"Campus 校园", type text},
+                {"Your Name 您的姓名", type text},
+                {"Your Role 您的角色", type text},
+                {"Date of Assessment 评估日期 ", type date}
+            },
+            "en-US"
+        ),
+
+    // Remove direct identifiers (good for privacy)
+    #"Removed PII Columns" =
+        Table.RemoveColumns(
+            #"Changed Type",
+            {"Start time", "Completion time", "Email", "Name"}
+        ),
+
+    #"Renamed Columns" =
+        Table.RenameColumns(
+            #"Removed PII Columns",
+            {
+                {"Campus 校园", "Campus"},
+                {"Your Name 您的姓名", "Submitted By"},
+                {"Your Role 您的角色", "Role"},
+                {"Date of Assessment 评估日期 ", "Date"}
+            }
+        ),
+
+    // Add scoring buckets (your existing logic stays the same; leaving placeholders here)
+    // Keep your full scoring column additions below as-is (Facility Related, Child Wellbeing, etc.)
+
+    // Anonymized campus key mapping:
+    // - removes real campus names
+    // - keeps stable grouping for analysis
+    #"Added Campus Key" =
+        Table.AddColumn(
+            #"Renamed Columns",
+            "CampusKey",
+            each
+                let
+                    T = Text.Upper(Text.Trim([Campus]))
+                in
+                    if Text.Contains(T, "CAMPUS 1") or Text.Contains(T, "C1") then "C1" else
+                    if Text.Contains(T, "CAMPUS 2") or Text.Contains(T, "C2") then "C2" else
+                    if Text.Contains(T, "CAMPUS 3") or Text.Contains(T, "C3") then "C3" else
+                    if Text.Contains(T, "CAMPUS 4") or Text.Contains(T, "C4") then "C4" else
+                    "OTHER",
+            type text
+        ),
+
+    // Optional: replace Campus with anonymized key for portfolio screenshots
+    #"Drop Raw Campus" = Table.RemoveColumns(#"Added Campus Key", {"Campus"}),
+    #"Rename CampusKey to Campus" = Table.RenameColumns(#"Drop Raw Campus", {{"CampusKey", "Campus"}})
+
+in
+    #"Rename CampusKey to Campus"
+
+
+
+let
+    Source = PowerPlatform.Dataflows(null),
+    Workspaces = Source{[Id="Workspaces"]}[Data],
+
+    // Redacted for confidentiality
+    Workspace = Workspaces{[workspaceId="<<REDACTED_WORKSPACE_ID>>"]}[Data],
+    Dataflow  = Workspace{[dataflowId="<<REDACTED_DATAFLOW_ID>>"]}[Data],
+
+    StudentsRaw = Dataflow{[entity="IL Students wClass", version=""]}[Data],
+
+    // Remove internal identifiers you don't need for portfolio logic
+    #"Removed Columns" = Table.RemoveColumns(StudentsRaw, {"centerId", "IL_region"}),
+
+    // Replace hard-coded real class names with a generic exclusion list
+    // (Keeps the intent: removing non-classroom / non-standard entries)
+    ExcludedClasses = {
+        "<<REDACTED_CLASS_1>>",
+        "<<REDACTED_CLASS_2>>",
+        "<<REDACTED_CLASS_3>>"
+        // add more as needed
+    },
+
+    #"Filtered Rows" =
+        Table.SelectRows(
+            #"Removed Columns",
+            each [className] <> null and not List.Contains(ExcludedClasses, [className])
+        ),
+
+    // Normalize class labels without exposing real identifiers
+    // Example replacements redacted
+    #"Normalized ClassName" =
+        Table.ReplaceValue(
+            #"Filtered Rows",
+            "<<REDACTED_OLD_CLASSNAME>>",
+            "<<REDACTED_NEW_CLASSNAME>>",
+            Replacer.ReplaceText,
+            {"className"}
+        ),
+
+    // Additional filter list (also redacted)
+    ExcludedClasses2 = {
+        "<<REDACTED_CLASS_A>>",
+        "<<REDACTED_CLASS_B>>"
+    },
+
+    #"Filtered Rows1" =
+        Table.SelectRows(
+            #"Normalized ClassName",
+            each [className] <> null and not List.Contains(ExcludedClasses2, [className])
+        ),
+
+    // Join logic kept (table names are fine; they don’t reveal tenant info)
+    #"Merged Queries" =
+        Table.NestedJoin(#"Filtered Rows1", {"className"}, dim_schoolList, {"ClassNumber"}, "dim_schoolList", JoinKind.LeftOuter),
+
+    #"Expanded dim_schoolList" =
+        Table.ExpandTableColumn(#"Merged Queries", "dim_schoolList", {"id", "Campus", "Program"}, {"dim_schoollist_id", "Campus", "Program"}),
+
+    // Optional: anonymize Campus/Program outputs for portfolio
+    #"Anonymized Campus" =
+        Table.TransformColumns(#"Expanded dim_schoolList", {{"Campus", each "Campus (Redacted)", type text}}),
+
+    #"Anonymized Program" =
+        Table.TransformColumns(#"Anonymized Campus", {{"Program", each "Program (Redacted)", type text}}),
+
+    // Age derivation is fine, but remove birthDate afterwards to avoid PII exposure
+    AddAge =
+        Table.AddColumn(
+            #"Anonymized Program",
+            "age_full_yrs",
+            each
+                "Year "
+                & Text.From(
+                    Number.RoundDown(
+                        Duration.Days(Date.From(DateTime.LocalNow()) - Date.From([birthDate])) / 365.25
+                    )
+                ),
+            type text
+        ),
+
+    #"Replaced Value6" =
+        Table.ReplaceValue(AddAge, "Prefer not to say", "N/A", Replacer.ReplaceText, {"gender"}),
+
+    #"Merged Queries1" =
+        Table.NestedJoin(#"Replaced Value6", {"id"}, stg_student_map, {"id"}, "stg_student_map", JoinKind.LeftOuter),
+
+    #"Expanded stg_student_map" =
+        Table.ExpandTableColumn(#"Merged Queries1", "stg_student_map", {"tc_childId", "tc_classroom_id"}, {"tc_childId", "tc_classroom_id"}),
+
+    #"Filtered Rows2" =
+        Table.SelectRows(#"Expanded stg_student_map", each ([status] = "Active")),
+
+    // Avoid de-duplicating by 'name' (PII). Use a stable non-PII key instead.
+    #"Removed Duplicates" =
+        Table.Distinct(#"Filtered Rows2", {"id"}),
+
+    #"Merged Queries2" =
+        Table.NestedJoin(#"Removed Duplicates", {"dim_schoollist_id"}, dim_schoolList, {"id"}, "dim_schoolList", JoinKind.LeftOuter),
+
+    #"Expanded dim_schoolList1" =
+        Table.ExpandTableColumn(#"Merged Queries2", "dim_schoolList", {"lesson_set_id"}, {"lesson_set_id"}),
+
+    #"Merged Queries3" =
+        Table.NestedJoin(#"Expanded dim_schoolList1", {"tc_classroom_id"}, #"System Classes Active", {"tc_classroom_id"}, "System Classes Active", JoinKind.LeftOuter),
+
+    #"Expanded System Classes Active" =
+        Table.ExpandTableColumn(#"Merged Queries3", "System Classes Active", {"lesson_set_id"}, {"lesson_set_id_alt"}),
+
+    #"Added Custom" =
+        Table.AddColumn(
+            #"Expanded System Classes Active",
+            "clean_lesson_set_id",
+            each
+                if [lesson_set_id] = null or Text.Trim(Text.From([lesson_set_id])) = ""
+                then [lesson_set_id_alt]
+                else [lesson_set_id]
+        ),
+
+    // Final privacy cleanup: remove row-level personal fields for portfolio sharing
+    #"Removed PII Fields" =
+        Table.RemoveColumns(
+            #"Added Custom",
+            {"name", "birthDate", "gender", "tc_childId", "tc_classroom_id"}
+        )
+
+in
+    #"Removed PII Fields"
+
